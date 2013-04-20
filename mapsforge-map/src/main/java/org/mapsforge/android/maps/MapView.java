@@ -329,6 +329,44 @@ public class MapView extends ViewGroup {
 		return this.mapMover.onTrackballEvent(motionEvent);
 	}
 
+    /**
+     * Returns the bitmap associated with a Tile. If the Bitmap hasn't been generated yet, queue a job to render it.
+     */
+    public Bitmap getTileBitmap(Tile tile) {
+        MapGeneratorJob mapGeneratorJob = new MapGeneratorJob(tile, this.mapFile, this.jobParameters,
+                this.debugSettings);
+
+        if (this.inMemoryTileCache.containsKey(mapGeneratorJob)) {
+            Bitmap bitmap = this.inMemoryTileCache.get(mapGeneratorJob);
+            return bitmap;
+        } else if (this.fileSystemTileCache.containsKey(mapGeneratorJob)) {
+            Bitmap bitmap = this.fileSystemTileCache.get(mapGeneratorJob);
+
+            if (bitmap != null) {
+                this.inMemoryTileCache.put(mapGeneratorJob, bitmap);
+                return bitmap;
+            } else {
+                // the image data could not be read from the cache
+                this.jobQueue.addJob(mapGeneratorJob);
+            }
+        } else {
+            // cache miss
+            this.jobQueue.addJob(mapGeneratorJob);
+        }
+
+        return null;
+    }
+
+    /**
+     * Triggers tile rendering.
+     */
+    public void startRenderingTiles() {
+        this.jobQueue.requestSchedule();
+        synchronized (this.mapWorker) {
+            this.mapWorker.notify();
+        }
+    }
+
 	/**
 	 * Triggers a redraw process of the map.
 	 */
@@ -354,33 +392,15 @@ public class MapView extends ViewGroup {
 			for (long tileY = tileTop; tileY <= tileBottom; ++tileY) {
 				for (long tileX = tileLeft; tileX <= tileRight; ++tileX) {
 					Tile tile = new Tile(tileX, tileY, mapPosition.zoomLevel);
-					MapGeneratorJob mapGeneratorJob = new MapGeneratorJob(tile, this.mapFile, this.jobParameters,
-							this.debugSettings);
 
-					if (this.inMemoryTileCache.containsKey(mapGeneratorJob)) {
-						Bitmap bitmap = this.inMemoryTileCache.get(mapGeneratorJob);
-						this.frameBuffer.drawBitmap(mapGeneratorJob.tile, bitmap);
-					} else if (this.fileSystemTileCache.containsKey(mapGeneratorJob)) {
-						Bitmap bitmap = this.fileSystemTileCache.get(mapGeneratorJob);
-
-						if (bitmap != null) {
-							this.frameBuffer.drawBitmap(mapGeneratorJob.tile, bitmap);
-							this.inMemoryTileCache.put(mapGeneratorJob, bitmap);
-						} else {
-							// the image data could not be read from the cache
-							this.jobQueue.addJob(mapGeneratorJob);
-						}
-					} else {
-						// cache miss
-						this.jobQueue.addJob(mapGeneratorJob);
-					}
+                    Bitmap bitmap = getTileBitmap(tile);
+                    if (bitmap != null) {
+                        this.frameBuffer.drawBitmap(tile, bitmap);
+                    }
 				}
 			}
 
-			this.jobQueue.requestSchedule();
-			synchronized (this.mapWorker) {
-				this.mapWorker.notify();
-			}
+            startRenderingTiles();
 		}
 
 		this.overlayController.redrawOverlays();
